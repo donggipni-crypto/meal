@@ -101,6 +101,7 @@
 
 <script>
 const KEY = 'dgmeal_cfg', QKEY = 'dgmeal_queue';
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbwwHqfqARTLsl5WTb7Ycd16pVfq2hXp1ChOF3FidwpN9a0oIBAGc0R3fLat6m8IIE59/exec';
 const $ = id => document.getElementById(id);
 let cfg = load(KEY) || null;
 let meals = [], qr = null, actx = null, wakeLock = null;
@@ -123,13 +124,13 @@ async function api(payload, c){
 
 /* ---------- 설정 ---------- */
 function openSetup(){
-  $('fUrl').value = cfg?.url || ''; $('fToken').value = cfg?.token || '';
+  $('fUrl').value = cfg?.url || DEFAULT_URL; $('fToken').value = cfg?.token || '';
   $('fDevice').value = cfg?.device || '식당폰1'; $('fCam').value = cfg?.cam || 'user';
   $('fKbd').checked = !!cfg?.kbd; $('btnCancel').classList.toggle('hidden', !cfg);
   $('fMsg').textContent = ''; show('setup');
 }
 $('btnSave').onclick = async () => {
-  const c = { url:$('fUrl').value.trim(), token:$('fToken').value.trim(), device:$('fDevice').value.trim()||'식당폰',
+  const c = { url:$('fUrl').value.replace(/\s+/g,''), token:$('fToken').value.replace(/\s+/g,''), device:$('fDevice').value.trim()||'식당폰',
               cam:$('fCam').value, kbd:$('fKbd').checked };
   if (!/^https:\/\/script\.google\.com\/.+\/exec/.test(c.url)) { $('fMsg').textContent = '웹앱 주소는 https://script.google.com/…/exec 형식이어야 합니다'; return; }
   $('fMsg').textContent = '연결 확인 중…';
@@ -139,7 +140,7 @@ $('btnSave').onclick = async () => {
     cfg = c; save(KEY, cfg); meals = r.meals || [];
     $('fMsg').textContent = '✅ 연결 성공: ' + (r.company || '');
     await stopCam(); location.reload();
-  } catch(e){ $('fMsg').textContent = '❌ 연결 실패 (주소·인터넷 확인): ' + e.message; }
+  } catch(e){ $('fMsg').textContent = '❌ 연결 실패: 웹앱 주소가 정확한지(한 글자라도 다르면 실패), 인터넷이 연결됐는지 확인하세요. (' + e.message + ')'; }
 };
 $('btnCancel').onclick = () => show('start');
 $('btnCfg').onclick = async () => { if (confirm('설정 화면으로 이동할까요?')) { await stopCam(); openSetup(); } };

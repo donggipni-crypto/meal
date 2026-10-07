@@ -73,13 +73,14 @@
 
 <script>
 const KEY = 'dgmeal_cfg';
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbwwHqfqARTLsl5WTb7Ycd16pVfq2hXp1ChOF3FidwpN9a0oIBAGc0R3fLat6m8IIE59/exec';
 const $ = id => document.getElementById(id);
 let emps = [], company = '';
 const saved = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e){ return {}; } })();
-$('fUrl').value = saved.url || ''; $('fToken').value = saved.token || '';
+$('fUrl').value = saved.url || DEFAULT_URL; $('fToken').value = saved.token || '';
 
 $('btnLoad').onclick = async () => {
-  const url = $('fUrl').value.trim(), token = $('fToken').value.trim();
+  const url = $('fUrl').value.replace(/\s+/g,''), token = $('fToken').value.replace(/\s+/g,'');
   $('msg').textContent = '불러오는 중…';
   try {
     const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action:'employees' }) });
@@ -90,7 +91,7 @@ $('btnLoad').onclick = async () => {
     const depts = [...new Set(emps.map(e => e.dept).filter(Boolean))].sort();
     $('fDept').innerHTML = '<option value="">전체 부서</option>' + depts.map(d => `<option>${esc(d)}</option>`).join('');
     render();
-  } catch(e){ $('msg').textContent = '❌ 불러오기 실패: ' + e.message; }
+  } catch(e){ $('msg').textContent = '❌ 불러오기 실패: 웹앱 주소가 정확한지, 인터넷 연결을 확인하세요 (' + e.message + ')'; }
 };
 $('btnRender').onclick = render;
 $('btnPrint').onclick = () => window.print();
