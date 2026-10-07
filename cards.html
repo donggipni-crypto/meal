@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>식사카드 인쇄</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{--ink:#0f172a;--mut:#64748b;--line:#cbd5e1;--acc:#0e7490;--bg:#f1f5f9}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Noto Sans KR',system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+  .ctl{max-width:900px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .ctl h1{font-size:20px;margin:4px 0}
+  .ctl .row{display:flex;gap:8px;flex-wrap:wrap}
+  .ctl input,.ctl select,.ctl textarea{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .ctl textarea{width:100%;min-height:54px}
+  .ctl button{font:inherit;font-weight:700;padding:10px 16px;border:0;border-radius:8px;background:var(--acc);color:#fff;cursor:pointer}
+  .ctl button.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .note{font-size:13px;color:var(--mut)}
+  .msg{font-size:14px}
+  /* A4 한 장에 카드 10장 (2열 × 5행), 신용카드 규격 85.6 × 54mm */
+  .sheets{display:flex;flex-direction:column;align-items:center;gap:16px;padding:0 16px 40px}
+  .page{width:210mm;min-height:297mm;background:#fff;padding:8mm 15mm;display:grid;
+        grid-template-columns:repeat(2,85.6mm);grid-auto-rows:54mm;column-gap:6mm;row-gap:2mm;justify-content:center;align-content:start;
+        box-shadow:0 2px 10px rgba(0,0,0,.08)}
+  .card{width:85.6mm;height:54mm;border:0.3mm dashed #94a3b8;border-radius:3mm;display:flex;overflow:hidden;position:relative}
+  .card .l{width:36mm;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3mm 0 2mm 3mm}
+  .card .qr{width:31mm;height:31mm}
+  .card .qr img,.card .qr canvas{width:31mm!important;height:31mm!important}
+  .card .qr canvas{display:none}
+  .card .cid{font-size:6.5pt;color:var(--mut);margin-top:1mm;letter-spacing:.3px}
+  .card .r{flex:1;padding:4mm 4mm 3mm 3mm;display:flex;flex-direction:column}
+  .card .co{font-size:7.5pt;color:var(--acc);font-weight:700}
+  .card .tt{font-size:8pt;color:var(--mut);margin-top:.5mm}
+  .card .nm{font-size:17pt;font-weight:900;margin-top:3.5mm;line-height:1.1;word-break:keep-all}
+  .card .dp{font-size:8.5pt;margin-top:1.5mm}
+  .card .tp{display:inline-block;margin-top:2mm;font-size:8pt;font-weight:700;color:#fff;background:var(--acc);border-radius:1.5mm;padding:.4mm 2mm;align-self:flex-start}
+  .card .tp.t3{background:#b45309}
+  .card .ft{margin-top:auto;font-size:5.8pt;color:var(--mut);line-height:1.35}
+  .card .bar{position:absolute;left:0;top:0;bottom:0;width:1.6mm;background:var(--acc)}
+  @page{size:A4;margin:0}
+  @media print{
+    body{background:#fff}
+    .ctl{display:none}
+    .sheets{padding:0;gap:0}
+    .page{box-shadow:none;break-after:page}
+    .page:last-child{break-after:auto}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
+</style>
+</head>
+<body>
+<div class="ctl">
+  <h1>구내식당 식사카드 인쇄</h1>
+  <div class="row">
+    <input id="fUrl" placeholder="웹앱 주소 (…/exec)" style="flex:2;min-width:260px">
+    <input id="fToken" placeholder="접속토큰" style="flex:1;min-width:140px">
+    <button id="btnLoad">직원명부 불러오기</button>
+  </div>
+  <div class="row">
+    <select id="fDept"><option value="">전체 부서</option></select>
+    <textarea id="fIds" placeholder="특정 사번만 인쇄 (재발급·신규 입사자 등). 쉼표나 줄바꿈으로 구분. 비워두면 전체."></textarea>
+  </div>
+  <div class="row">
+    <button id="btnRender" class="sec">미리보기 갱신</button>
+    <button id="btnPrint">🖨 인쇄</button>
+    <span class="msg" id="msg"></span>
+  </div>
+  <div class="note">인쇄 설정에서 <b>배율 100%(실제 크기)</b>, 여백 <b>없음</b>, <b>배경 그래픽 켜기</b>로 인쇄하세요. 점선을 따라 자른 뒤 카드 케이스나 코팅을 권장합니다. PDF로 저장해 인쇄소에 PVC 카드 제작을 맡겨도 됩니다.</div>
+</div>
+<div class="sheets" id="sheets"></div>
+
+<script>
+const KEY = 'dgmeal_cfg';
+const $ = id => document.getElementById(id);
+let emps = [], company = '';
+const saved = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch(e){ return {}; } })();
+$('fUrl').value = saved.url || ''; $('fToken').value = saved.token || '';
+
+$('btnLoad').onclick = async () => {
+  const url = $('fUrl').value.trim(), token = $('fToken').value.trim();
+  $('msg').textContent = '불러오는 중…';
+  try {
+    const res = await fetch(url, { method:'POST', body: JSON.stringify({ token, action:'employees' }) });
+    const r = await res.json();
+    if (r.status !== 'ok') { $('msg').textContent = '❌ ' + (r.message || '실패'); return; }
+    emps = r.employees || []; company = r.company || '';
+    try { localStorage.setItem(KEY, JSON.stringify(Object.assign(saved, { url, token }))); } catch(e){}
+    const depts = [...new Set(emps.map(e => e.dept).filter(Boolean))].sort();
+    $('fDept').innerHTML = '<option value="">전체 부서</option>' + depts.map(d => `<option>${esc(d)}</option>`).join('');
+    render();
+  } catch(e){ $('msg').textContent = '❌ 불러오기 실패: ' + e.message; }
+};
+$('btnRender').onclick = render;
+$('btnPrint').onclick = () => window.print();
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render(){
+  const ids = $('fIds').value.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+  const dept = $('fDept').value;
+  let list = emps.filter(e => (!dept || e.dept === dept) && (!ids.length || ids.includes(e.id)));
+  const noCode = list.filter(e => !e.card);
+  list = list.filter(e => e.card);
+  const box = $('sheets'); box.innerHTML = '';
+  for (let i = 0; i < list.length; i += 10) {
+    const page = document.createElement('div'); page.className = 'page';
+    list.slice(i, i + 10).forEach(e => {
+      const c = document.createElement('div'); c.className = 'card';
+      c.innerHTML = `<div class="bar"></div>
+        <div class="l"><div class="qr"></div><div class="cid">사번 ${esc(e.id)}</div></div>
+        <div class="r">
+          <div class="co">${esc(company)}</div><div class="tt">구내식당 식사카드</div>
+          <div class="nm">${esc(e.name)}</div><div class="dp">${esc(e.dept)}</div>
+          <div class="tp ${e.type === '3식' ? 't3' : ''}">${esc(e.type)}</div>
+          <div class="ft">본인만 사용 · 타인 양도 금지<br>분실 시 즉시 담당 부서에 신고</div>
+        </div>`;
+      page.appendChild(c);
+      new QRCode(c.querySelector('.qr'), { text: e.card, width: 300, height: 300, correctLevel: QRCode.CorrectLevel.M });
+    });
+    box.appendChild(page);
+  }
+  $('msg').textContent = `카드 ${list.length}장 · A4 ${Math.ceil(list.length / 10)}매` +
+    (noCode.length ? ` · ⚠ 카드코드 없는 직원 ${noCode.length}명 제외 (시트 메뉴 ② 카드코드 발급 먼저)` : '');
+}
+</script>
+</body>
+</html>
