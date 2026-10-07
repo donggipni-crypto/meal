@@ -114,7 +114,7 @@ function show(id){ ['setup','start','main'].forEach(s => $(s).classList.toggle('
 /* ---------- 서버 통신 ---------- */
 async function api(payload, c){
   c = c || cfg;
-  const ctl = new AbortController(); const to = setTimeout(()=>ctl.abort(), 15000);
+  const ctl = new AbortController(); const to = setTimeout(()=>ctl.abort(), 40000);   // 구글 서버 첫 응답이 느릴 수 있어 넉넉히
   try {
     const res = await fetch(c.url, { method:'POST', body: JSON.stringify(Object.assign({ token:c.token }, payload)), signal: ctl.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -222,9 +222,8 @@ async function flushQueue(){
     let q = getQ();
     while (q.length) {
       const it = q[0];
-      try { const r = await api({ action:'scan', code: it.code, manual: it.manual, ts: it.ts, queued: 1, device: cfg.device });
-            if (r.status === 'denied') break; }
-      catch(e){ break; }
+      try { await api({ action:'scan', code: it.code, manual: it.manual, ts: it.ts, queued: 1, device: cfg.device }); }
+      catch(e){ break; }   // 서버 응답을 받았으면(결과와 무관) 대기열에서 제거
       q.shift(); save(QKEY, q);
     }
   } finally { flushing = false; badge(); }
@@ -248,6 +247,7 @@ function curMeal(){
   return meals.find(m => { const s = m2(m.start), e = m2(m.end); return s != null && e != null && t >= s && t <= e; });
 }
 function renderMeal(){
+  if (!meals.length) { $('mealNow').textContent = '시간표 불러오는 중'; $('mealInfo').textContent = ''; return; }
   const m = curMeal();
   $('mealNow').textContent = m ? m.meal : '식사시간 아님';
   $('mealInfo').textContent = m ? `${m.start}~${m.end} · 오늘 ${counts[m.meal] ?? '-'}명` : (meals.map(x => `${x.meal} ${x.start}`).join(' · '));
@@ -274,18 +274,26 @@ function beep(ok){
   });
 }
 
+/* ---------- 시간표 불러오기 ---------- */
+async function loadMeals(){
+  try {
+    const r = await api({ action:'ping' });
+    if (r.status === 'ok') { meals = r.meals || []; $('co').textContent = r.company || '구내식당'; $('startCo').textContent = r.company || ''; }
+    else $('startCo').textContent = '⚠ ' + (r.message || '연결 오류') + ' — ⚙ 설정 확인';
+  } catch(e){ if (!meals.length) $('startCo').textContent = '⚠ 서버 연결 지연 — 1분 후 자동 재시도. 스캔은 그대로 가능합니다.'; }
+  renderMeal();
+}
+
 /* ---------- 초기화 ---------- */
 (async function init(){
   badge();
   if (!cfg) { openSetup(); return; }
   show('start');
-  $('startCo').textContent = '연결 확인 중…';
-  try {
-    const r = await api({ action:'ping' });
-    if (r.status === 'ok') { meals = r.meals || []; $('co').textContent = r.company || '구내식당'; $('startCo').textContent = r.company || ''; }
-    else $('startCo').textContent = '⚠ ' + (r.message || '연결 오류') + ' — ⚙ 설정 확인';
-  } catch(e){ $('startCo').textContent = '⚠ 서버 연결 실패 (인터넷 확인). 오프라인 상태에서도 스캔은 임시 저장됩니다.'; }
+  $('startCo').textContent = '연결 확인 중… (첫 연결은 20초 정도 걸릴 수 있습니다)';
   tick(); setInterval(tick, 1000 * 15);
+  await loadMeals();
+  setInterval(loadMeals, 1000 * 60 * 30);   // 30분마다 시간표 갱신 (설정 시트 변경 반영)
+  setInterval(() => { if (!meals.length) loadMeals(); }, 1000 * 60);
 })();
 </script>
 </body>
