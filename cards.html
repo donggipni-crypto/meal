@@ -35,9 +35,10 @@
   .card .tt{font-size:8pt;color:var(--mut);margin-top:.5mm}
   .card .nm{font-size:17pt;font-weight:900;margin-top:3.5mm;line-height:1.1;word-break:keep-all}
   .card .dp{font-size:8.5pt;margin-top:1.5mm}
-  .card .tp{display:inline-block;margin-top:2mm;font-size:8pt;font-weight:700;color:#fff;background:var(--acc);border-radius:1.5mm;padding:.4mm 2mm;align-self:flex-start}
-  .card .tp.t3{background:#b45309}
-  .card .ft{margin-top:auto;font-size:5.8pt;color:var(--mut);line-height:1.35}
+  .card .sg{margin-top:2.2mm;display:flex;align-items:flex-end;gap:1.5mm}
+  .card .sg span{font-size:6.5pt;color:var(--mut);white-space:nowrap}
+  .card .sg i{flex:1;height:5.5mm;border-bottom:0.3mm solid #475569}
+  .card .ft{margin-top:auto;font-size:6pt;color:#475569;line-height:1.4;font-weight:700}
   .card .bar{position:absolute;left:0;top:0;bottom:0;width:1.6mm;background:var(--acc)}
   @page{size:A4;margin:0}
   @media print{
@@ -114,8 +115,8 @@ function render(){
         <div class="r">
           <div class="co">${esc(company)}</div><div class="tt">구내식당 식사카드</div>
           <div class="nm">${esc(e.name)}</div><div class="dp">${esc(e.dept)}</div>
-          <div class="tp ${e.type === '3식' ? 't3' : ''}">${esc(e.type)}</div>
-          <div class="ft">본인만 사용 · 타인 양도 금지<br>분실 시 즉시 담당 부서에 신고</div>
+          <div class="sg"><span>소지자 서명</span><i></i></div>
+          <div class="ft">본인만 사용 · 타인 양도 금지<br>분실 시 즉시 경영지원부로 신고</div>
         </div>`;
       page.appendChild(c);
       new QRCode(c.querySelector('.qr'), { text: e.card, width: 300, height: 300, correctLevel: QRCode.CorrectLevel.M });
