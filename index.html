@@ -89,6 +89,7 @@
     <div id="reader"></div>
     <div class="hint">카드의 QR을 화면에 비춰주세요<small>초록 화면 + "띵" 소리가 나면 완료</small></div>
     <div class="badge" id="queueBadge"></div>
+    <div id="mode" style="text-align:center;font-size:12px;color:var(--mut)"></div>
     <div class="row">
       <button class="grow" id="btnManual">카드 미지참 (사번 입력)</button>
       <button id="btnCfg">⚙</button>
@@ -100,12 +101,13 @@
 <input id="kbd" autocomplete="off">
 
 <script>
-const KEY = 'dgmeal_cfg', QKEY = 'dgmeal_queue';
+const KEY = 'dgmeal_cfg', QKEY = 'dgmeal_queue', EKEY = 'dgmeal_emps', TKEY = 'dgmeal_today';
 const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbwwHqfqARTLsl5WTb7Ycd16pVfq2hXp1ChOF3FidwpN9a0oIBAGc0R3fLat6m8IIE59/exec';
 const $ = id => document.getElementById(id);
 let cfg = load(KEY) || null;
 let meals = [], qr = null, actx = null, wakeLock = null;
 let busy = false, lastCode = '', lastAt = 0, ovTimer = null, counts = {};
+let emps = load(EKEY), today = load(TKEY) || { date:'', items:[] };
 
 function load(k){ try { return JSON.parse(localStorage.getItem(k)); } catch(e){ return null; } }
 function save(k,v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
@@ -156,10 +158,12 @@ $('btnStart').onclick = async () => {
 };
 
 async function startCam(){
-  qr = new Html5Qrcode('reader', { formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE], verbose:false });
+  qr = new Html5Qrcode('reader', { formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE], verbose:false,
+    experimentalFeatures:{ useBarCodeDetectorIfSupported:true } });   // 안드로이드 크롬 내장 인식기 사용 (훨씬 빠름)
   try {
     await qr.start({ facingMode: cfg.cam || 'user' },
-      { fps: 12, qrbox: (w,h) => { const s = Math.floor(Math.min(w,h)*0.72); return { width:s, height:s }; } },
+      { fps: 25, disableFlip: true, qrbox: (w,h) => { const s = Math.floor(Math.min(w,h)*0.85); return { width:s, height:s }; },
+        videoConstraints: { facingMode: cfg.cam || 'user', width: { ideal: 1280 }, height: { ideal: 720 } } },
       t => onCode(t, false), () => {});
   } catch(e) {
     showOv('bad','📷','카메라 오류','카메라 권한을 허용했는지 확인하세요\n' + e, 6000);
@@ -180,12 +184,46 @@ function armKeyboard(){
 }
 
 /* ---------- 스캔 처리 ---------- */
+function todayStr(){ const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function getToday(){ const d = todayStr(); if (today.date !== d) { today = { date:d, items:[] }; save(TKEY, today); } return today; }
+function hhmm(){ const d = new Date(); return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); }
+
+/* 직원명부를 휴대폰에 내려받아 두고 즉시 판정 (서버 기록은 뒤에서 전송) */
+async function loadEmps(){
+  try { const r = await api({ action:'employees' }); if (r.status === 'ok') { emps = { at: Date.now(), list: r.employees || [] }; save(EKEY, emps); } } catch(e){}
+  showMode();
+}
+function localDecide(code, manual){
+  const e = manual ? emps.list.find(x => x.id === code) : emps.list.find(x => x.card === code.toUpperCase());
+  const m = curMeal(), now = hhmm();
+  if (!e) return { ok:false, result:'미등록', message: manual ? '등록되지 않은 사번입니다' : '등록되지 않았거나 사용 중지된 카드입니다' };
+  if (!m) return { ok:false, result:'시간외', message:'지금은 식사 인정 시간이 아닙니다', e };
+  const t = getToday(), mine = t.items.filter(i => i.id === e.id), same = mine.find(i => i.meal === m.meal);
+  if (same) return { ok:false, result:'중복', message:`오늘 ${m.meal} 이미 처리됨 (${same.time})`, e };
+  if (e.type !== '3식' && mine.length >= 1) return { ok:false, result:'1식초과', message:`1식 대상자 · 오늘 ${mine[0].meal} 이미 식사 (${mine[0].time})`, e };
+  t.items.push({ id:e.id, meal:m.meal, time:now }); save(TKEY, t);
+  return { ok:true, result:'정상', e, meal:m.meal, time:now, count: t.items.filter(i => i.meal === m.meal).length };
+}
+
 async function onCode(text, manual){
   const code = String(text || '').trim();
   if (!code || busy) return;
   const now = Date.now();
   if (!manual && code === lastCode && now - lastAt < 6000) return;   // 같은 카드 연속 인식 방지
   lastCode = code; lastAt = now; busy = true;
+
+  // ① 빠른 모드: 휴대폰에서 즉시 판정 → 서버에는 뒤에서 기록
+  if (emps && emps.list && emps.list.length && meals.length) {
+    const r = localDecide(code, manual);
+    if (r.ok) { counts[r.meal] = r.count; renderMeal(); showOv('ok','✔', r.e.name, `${r.e.dept} · ${r.meal}`, `${r.e.type} · ${r.time}`); beep(true); }
+    else { showOv('bad','✖', r.result, r.message, r.e ? `${r.e.name} ${r.e.dept}` : ''); beep(false); if (r.result === '미등록') loadEmps(); }
+    enqueue({ code, manual: manual ? 1 : 0, ts: now });
+    flushQueue();
+    setTimeout(() => { hideOv(); busy = false; }, r.ok ? 800 : 1800);
+    return;
+  }
+
+  // ② 명부를 아직 못 받은 경우: 서버에 직접 확인 (느림)
   showOv('wait','⏳','확인 중…','', 0);
   let hold = 2000;
   try {
@@ -193,8 +231,8 @@ async function onCode(text, manual){
     if (r.status === 'ok') {
       if (r.meal) counts[r.meal] = r.mealCount;
       renderMeal();
-      if (r.ok) { showOv('ok','✔', r.name, `${r.dept} · ${r.meal}`, `${r.type} · ${r.time}`); beep(true); hold = 1800; }
-      else { showOv('bad','✖', r.result, r.message, r.name ? `${r.name} ${r.dept}` : ''); beep(false); hold = 3200; }
+      if (r.ok) { showOv('ok','✔', r.name, `${r.dept} · ${r.meal}`, `${r.type} · ${r.time}`); beep(true); hold = 1500; }
+      else { showOv('bad','✖', r.result, r.message, r.name ? `${r.name} ${r.dept}` : ''); beep(false); hold = 3000; }
     } else {
       showOv('bad','⚠', r.status === 'denied' ? '접속 오류' : '처리 오류', r.message || '', '관리자에게 문의'); beep(false); hold = 4000;
     }
@@ -214,19 +252,25 @@ $('btnManual').onclick = () => {
 /* ---------- 오프라인 대기열 ---------- */
 function getQ(){ return load(QKEY) || []; }
 function enqueue(item){ const q = getQ(); q.push(item); save(QKEY, q); badge(); }
-function badge(){ const n = getQ().length; $('queueBadge').textContent = n ? `⚠ 미전송 ${n}건 (자동 재전송 대기)` : ''; }
-let flushing = false;
+function showMode(){ const el = $('mode'); if (!el) return; const fast = emps && emps.list && emps.list.length && meals.length;
+  el.textContent = 'v6 · ' + (fast ? `⚡ 빠른 모드 (명부 ${emps.list.length}명)` : '서버 확인 모드 (명부 불러오는 중)'); }
+setInterval(showMode, 5000);
+function badge(){ const n = getQ().filter(i => Date.now() - i.ts > 60000).length; $('queueBadge').textContent = n ? `⚠ 시트 미전송 ${n}건 (인터넷 확인 · 자동 재전송)` : ''; }
+setInterval(badge, 15000);
+let flushing = false, flushAgain = false;
 async function flushQueue(){
-  if (flushing || !cfg) return; flushing = true;
+  if (!cfg) return;
+  if (flushing) { flushAgain = true; return; }
+  flushing = true;
   try {
     let q = getQ();
     while (q.length) {
       const it = q[0];
-      try { await api({ action:'scan', code: it.code, manual: it.manual, ts: it.ts, queued: 1, device: cfg.device }); }
+      try { await api({ action:'scan', code: it.code, manual: it.manual, ts: it.ts, queued: (Date.now() - it.ts > 60000) ? 1 : 0, device: cfg.device }); }
       catch(e){ break; }   // 서버 응답을 받았으면(결과와 무관) 대기열에서 제거
       q.shift(); save(QKEY, q);
     }
-  } finally { flushing = false; badge(); }
+  } finally { flushing = false; badge(); if (flushAgain) { flushAgain = false; flushQueue(); } }
 }
 setInterval(flushQueue, 20000);
 window.addEventListener('online', flushQueue);
@@ -291,8 +335,9 @@ async function loadMeals(){
   show('start');
   $('startCo').textContent = '연결 확인 중… (첫 연결은 20초 정도 걸릴 수 있습니다)';
   tick(); setInterval(tick, 1000 * 15);
-  await loadMeals();
-  setInterval(loadMeals, 1000 * 60 * 30);   // 30분마다 시간표 갱신 (설정 시트 변경 반영)
+  await Promise.all([loadMeals(), loadEmps()]);
+  setInterval(loadMeals, 1000 * 60 * 30);
+  setInterval(loadEmps, 1000 * 60 * 10);   // 10분마다 직원명부 갱신 (신규·퇴사 반영)   // 30분마다 시간표 갱신 (설정 시트 변경 반영)
   setInterval(() => { if (!meals.length) loadMeals(); }, 1000 * 60);
 })();
 </script>

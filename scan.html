@@ -89,6 +89,7 @@
     <div id="reader"></div>
     <div class="hint">카드의 QR을 화면에 비춰주세요<small>초록 화면 + "띵" 소리가 나면 완료</small></div>
     <div class="badge" id="queueBadge"></div>
+    <div id="mode" style="text-align:center;font-size:12px;color:var(--mut)"></div>
     <div class="row">
       <button class="grow" id="btnManual">카드 미지참 (사번 입력)</button>
       <button id="btnCfg">⚙</button>
@@ -157,10 +158,12 @@ $('btnStart').onclick = async () => {
 };
 
 async function startCam(){
-  qr = new Html5Qrcode('reader', { formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE], verbose:false });
+  qr = new Html5Qrcode('reader', { formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE], verbose:false,
+    experimentalFeatures:{ useBarCodeDetectorIfSupported:true } });   // 안드로이드 크롬 내장 인식기 사용 (훨씬 빠름)
   try {
     await qr.start({ facingMode: cfg.cam || 'user' },
-      { fps: 12, qrbox: (w,h) => { const s = Math.floor(Math.min(w,h)*0.72); return { width:s, height:s }; } },
+      { fps: 25, disableFlip: true, qrbox: (w,h) => { const s = Math.floor(Math.min(w,h)*0.85); return { width:s, height:s }; },
+        videoConstraints: { facingMode: cfg.cam || 'user', width: { ideal: 1280 }, height: { ideal: 720 } } },
       t => onCode(t, false), () => {});
   } catch(e) {
     showOv('bad','📷','카메라 오류','카메라 권한을 허용했는지 확인하세요\n' + e, 6000);
@@ -188,6 +191,7 @@ function hhmm(){ const d = new Date(); return String(d.getHours()).padStart(2,'0
 /* 직원명부를 휴대폰에 내려받아 두고 즉시 판정 (서버 기록은 뒤에서 전송) */
 async function loadEmps(){
   try { const r = await api({ action:'employees' }); if (r.status === 'ok') { emps = { at: Date.now(), list: r.employees || [] }; save(EKEY, emps); } } catch(e){}
+  showMode();
 }
 function localDecide(code, manual){
   const e = manual ? emps.list.find(x => x.id === code) : emps.list.find(x => x.card === code.toUpperCase());
@@ -215,7 +219,7 @@ async function onCode(text, manual){
     else { showOv('bad','✖', r.result, r.message, r.e ? `${r.e.name} ${r.e.dept}` : ''); beep(false); if (r.result === '미등록') loadEmps(); }
     enqueue({ code, manual: manual ? 1 : 0, ts: now });
     flushQueue();
-    setTimeout(() => { hideOv(); busy = false; }, r.ok ? 1200 : 2500);
+    setTimeout(() => { hideOv(); busy = false; }, r.ok ? 800 : 1800);
     return;
   }
 
@@ -248,6 +252,9 @@ $('btnManual').onclick = () => {
 /* ---------- 오프라인 대기열 ---------- */
 function getQ(){ return load(QKEY) || []; }
 function enqueue(item){ const q = getQ(); q.push(item); save(QKEY, q); badge(); }
+function showMode(){ const el = $('mode'); if (!el) return; const fast = emps && emps.list && emps.list.length && meals.length;
+  el.textContent = 'v6 · ' + (fast ? `⚡ 빠른 모드 (명부 ${emps.list.length}명)` : '서버 확인 모드 (명부 불러오는 중)'); }
+setInterval(showMode, 5000);
 function badge(){ const n = getQ().filter(i => Date.now() - i.ts > 60000).length; $('queueBadge').textContent = n ? `⚠ 시트 미전송 ${n}건 (인터넷 확인 · 자동 재전송)` : ''; }
 setInterval(badge, 15000);
 let flushing = false, flushAgain = false;
